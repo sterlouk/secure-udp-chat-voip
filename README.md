@@ -1,93 +1,104 @@
-# P2P Chat and VoIP Application using UDP in Java
+# Secure P2P Chat & VoIP over UDP
 
-This repository contains the codebase of the **Peer-to-Peer (P2P) Chat and VoIP application** which will be developed as the main assignment for the **Computer Networks II** course. This course is taught as part of the curiculum of the **Electrical and Computer Engineering** department of the **Aristotle University of Thessaloniki (AUTH)** during the **2024-2025** academic year.
+[![CI](https://github.com/sterlouk/secure-udp-chat-voip/actions/workflows/ci.yml/badge.svg)](https://github.com/sterlouk/secure-udp-chat-voip/actions/workflows/ci.yml)
 
-## 📚 Project Overview
+A peer-to-peer desktop app for real-time text chat and voice calls between two computers, written in plain Java (`java.net`, `javax.sound`, `javax.crypto`) with **no runtime dependencies**.
 
-The purpose of this project is to create a simple Peer-to-Peer (P2P) application that enables real-time chat and Voice over IP (VoIP) communication utilizing the UDP protocol in Java. This application will be based on  `java.net` to handle network communications, providing a foundational understanding of network programming, concurrency, and instant messaging and multimedia dataexchange between two peers.
+All traffic is **end-to-end encrypted and authenticated with AES-256-GCM**, using a key derived from a shared passphrase. The receiver rejects tampered, forged, replayed, reflected and stale packets. See **[SECURITY.md](SECURITY.md)** for the threat model and protocol.
 
-## 🛠️ Technologies Used
-
-- **Programming Language:** Java
-- **Libraries & Frameworks:**
-  - `java.net` for networking
-  - `javax.sound` for audio capture and playback
-- **Protocols:**
-  - UDP (User Datagram Protocol) for communication
-- **Tools:**
-  - Git for version control
-  - Maven for build automation and project management for Java projects
-
-## ✨ Features
-
-- Instant messaging and voice data exchange using UDP
-- Simplistic Graphic User Interface (GUI) instead of command line implementation
-- Multithreaded architecture to enable concurent instant messaging and VoIP functionalities
-
-## 🛠️ Pre-requisites 
-
-Please consider installing and using the following applications and tools for the assignment:
-
-- Git: [link](https://git-scm.com/downloads)
-- Java 23 (although it is expected to work with any version from 1.8 and beyond): [link](https://www.oracle.com/java/technologies/downloads/)
-- Eclipse IDE for Enterprise Java and Web Developers: [link](https://www.eclipse.org/downloads/packages/)
-- Apache Maven: [link](https://maven.apache.org/download.cgi)
-
-## 🚀 Installation
-
-1. **Clone the Repository:**
-   ```bash
-   git clone https://github.com/siavvasm/CN2_AUTH_ChatAndVoIP.git
-   ```
-
-2. **Import the code into the ECLIPSE IDE:**
-
-- In ECLIPSE IDE select File -> Import
-- In the displayed Window select "Existing Maven Projects" anc click Next
-- Them click on the Browse button and navigate inside the CN2_AUTH_ChatAndVoIP folder and click on the "Select Folder" button
-- Check the checkbox with the "pom.xml" file and click Finish
-- The CN2_AUTH_ChatAndVoIP application must be visible in the Navigation Pane of the ECLISPE IDE
-
-## 📖 Assignment Instructions
-
-Inside the codebase there is a single Java class named "App.java". This will be the central class of the Chat and VoIP application in which the main() method will reside. 
-
-In order to compile and execute the code you need to select the App.java class and click on the Run As option of ECLIPSE IDE and then select the "Run as Java Application" option. This will compile and run the source code. If the compilation is successful the GUI of the application will be displayed on your screen. The GUI is presented below: 
+![Two peers exchanging encrypted chat messages and a voice call](docs/screenshots/chat-two-peers.png)
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/713e81b5-f7bc-44ec-8d6c-56fa77288c2d" alt="cn2-cnv-1">
+  <img src="docs/screenshots/connect-dialog.png" alt="Connect dialog with peer IP, mirrored ports and shared passphrase" width="320"><br>
+  <em>Each peer enters the other's IP, mirrored ports and the shared passphrase.</em>
 </p>
 
-As can be seen by the figure above, the application contains a Text Field that is used for writing the messages that need to be sent to the other peer, a Text Area for displaying the messages that have been sent or received, and two buttons. The "Send" button is responsible for sending the messages that are typed into the Text Field. The "Call" button is responsible for initiating a VoIP call with the remote peer (i.e., for starting listening for voice packets and sending voice packets captured from the computer's microphone).
+## Background
 
-As part of the assignment, you will need to implement the functionalities of the "Send" and "Call" buttons (as at the moment they are doing nothing). 
+The app started as the main assignment for **Computer Networks II** (ECE, Aristotle University of Thessaloniki, 2024–25). The assignment was to implement UDP chat and VoIP on top of a GUI skeleton provided by the course ([template](https://github.com/siavvasm/CN2_AUTH_ChatAndVoIP)).
 
-Inside the codebase of the application, there are specific spaces in which you will need to complete by writing the appropriate source code.  These are designated with the **//TODO:** comment tag. For example, you should search for parts of the following form: 
+| Version | What it is |
+|---|---|
+| [`course-submission`](https://github.com/sterlouk/secure-udp-chat-voip/tree/course-submission) | The version I submitted: working plaintext UDP chat and VoIP |
+| `master` | Extended after the course: encryption, anti-replay, bug fixes, tests, CI |
+
+### What changed after submission
+
+**Security**
+- Added AES-256-GCM encryption with PBKDF2 key derivation.
+- Added sequence-number and timestamp replay protection, and reflection and type-confusion checks.
+
+**Bugs fixed**
+- **Truncated chat messages.** A reused `DatagramPacket` kept the length of the previous datagram, so a long message after a short one was cut off.
+- **Calling again failed.** "Close call" only set flags; the sockets and audio lines stayed open, so a second call failed with *port in use* or *line unavailable*.
+- **Mute and Deafen could not be undone.** Their flags also weren't `volatile`, so other threads might not see changes.
+- **Text encoding and threading.** Text used the platform's default charset (now UTF-8), and Swing was updated from background threads.
+
+**Engineering**
+- Split the single 288-line class into focused classes.
+- Added JUnit tests and GitHub Actions CI.
+- The app now builds as a runnable jar.
+
+## How it works
 
 ```
-// TODO: Your code goes here...
-// TODO: Please define and initialize your variables here...
+ Peer A                                                     Peer B
+┌─────────────────┐   UDP  [hdr|nonce|AES-GCM(text)]   ┌─────────────────┐
+│ chat send  ─────┼───────────────────────────────────▶│ chat receive    │
+│ chat receive ◀──┼────────────────────────────────────┼── chat send     │
+│                 │                                    │                 │
+│ mic ▶ encrypt ──┼──── 32 ms PCM frames, ~31 pkt/s ──▶│ decrypt ▶ spkr  │
+│ spkr ◀ decrypt ◀┼────────────────────────────────────┼── encrypt ◀ mic │
+└─────────────────┘                                    └─────────────────┘
 ```
 
-- **This README file will be updated with additional instructions and hints in the upcoming days...**
+- **Chat:** one receiver thread is bound to the chat port. Sends go through a single-thread executor, so the UI never blocks on the network.
+- **Voice:** 16 kHz / 16-bit / mono PCM, captured in 1024-byte (32 ms) frames. One capture thread and one playback thread per call. Hanging up closes the sockets and audio lines, which cleanly unblocks both threads.
+- **Crypto:** [`SecureChannel`](src/main/java/com/cn2/communication/SecureChannel.java) seals and opens every datagram. [`ReplayWindow`](src/main/java/com/cn2/communication/ReplayWindow.java) is a 64-packet sliding anti-replay window, the same idea as IPsec/DTLS.
 
-## ⚠️ **ATTENTION:**
->- You must use the UDP protocol both for the Chat and for the VoIP implementations.
->- You must utilize the native libraries that are provided by Java (`java.net`  and `javax.sound` *).
->- You cannot use any external dependency for this assignment.
->- **Firewall and Network Configuration:** Ensure that your firewall settings allow UDP traffic on the specified ports. Incorrect configurations may prevent peers from connecting.
->- **Java Version:** This application requires Java **1.8** or higher. Ensure that your `JAVA_HOME` environment variable is correctly set to the installed Java version.
->- **Audio Hardware:** Proper functioning of VoIP features depends on the availability and correct configuration of audio input/output devices (e.g., microphone and speakers).
+| Class | Responsibility |
+|---|---|
+| [`App`](src/main/java/com/cn2/communication/App.java) | Swing GUI, connection dialog, chat send/receive |
+| [`VoiceCall`](src/main/java/com/cn2/communication/VoiceCall.java) | Call lifecycle: audio lines, sockets, capture and playback threads |
+| [`SecureChannel`](src/main/java/com/cn2/communication/SecureChannel.java) | Key derivation, packet format, AES-GCM, receive checks |
+| [`ReplayWindow`](src/main/java/com/cn2/communication/ReplayWindow.java) | Sliding-window duplicate detection |
+| [`ConnectionSettings`](src/main/java/com/cn2/communication/ConnectionSettings.java) | Input validation for peer address, ports and passphrase |
 
-## 📄 Useful Material
+## Running it
 
-- The original description of the assignment can be found [here](https://sites.google.com/view/computer-networks-ii/%CE%B5%CF%81%CE%B3%CE%B1%CF%83%CE%AF%CE%B5%CF%82)
-- Additional content for the assignement will be uploaded [here](https://sites.google.com/view/computer-networks-ii)
+**Requirements:** JDK 11+ and Maven. A microphone and speakers are needed only for calls.
 
-## 📫 Contact: 
+```bash
+mvn package                           # builds and runs the tests
+java -jar target/secure-chat-voip.jar
+```
 
-For any questions, suggestions, or contributions, feel free to reach out:
+Each peer sends to the other's listening ports, so the two peers use **mirrored** port settings and the **same passphrase**.
 
-- Email: msiavva@ece.auth.gr, siavvasm@gmail.com
+| Setting | Peer A | Peer B |
+|---|---|---|
+| Peer IP address | B's IP | A's IP |
+| Chat: send to / listen on | 50001 / 50000 | 50000 / 50001 |
+| Voice: send to / listen on | 50003 / 50002 | 50002 / 50003 |
 
- 
+**To try it on one machine:** start two copies, use `127.0.0.1` as the peer IP, and give the second copy the Peer B ports. On two machines, allow the listening ports through the firewall (UDP).
+
+## Tests
+
+```bash
+mvn test
+```
+
+24 tests cover:
+- the AES-GCM round trip (including non-ASCII text);
+- that every single-bit flip in a packet is rejected;
+- a wrong passphrase, replays, a forged sequence number that must not lock out real traffic, reflection, type confusion, stale timestamps and malformed packets;
+- the sliding window's edge cases;
+- input validation;
+- a round trip over real UDP sockets.
+
+Audio and the GUI are tested manually.
+
+## Limitations
+
+Peers connect by IP, so there is no NAT traversal or signalling server. Audio is uncompressed PCM, about 256 kbit/s per direction. Security trade-offs, such as no forward secrecy with a pre-shared passphrase, are listed in [SECURITY.md](SECURITY.md#known-limitations).
