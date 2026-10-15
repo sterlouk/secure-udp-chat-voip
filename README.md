@@ -1,6 +1,6 @@
 # Secure P2P Chat & VoIP over UDP
 
-[![CI](https://github.com/sterlouk/CN2_AUTH_ChatAndVoIP/actions/workflows/ci.yml/badge.svg)](https://github.com/sterlouk/CN2_AUTH_ChatAndVoIP/actions/workflows/ci.yml)
+[![CI](https://github.com/sterlouk/secure-udp-chat-voip/actions/workflows/ci.yml/badge.svg)](https://github.com/sterlouk/secure-udp-chat-voip/actions/workflows/ci.yml)
 
 A peer-to-peer desktop app for real-time text chat and voice calls between two computers, written in plain Java (`java.net`, `javax.sound`, `javax.crypto`) with **no runtime dependencies**.
 
@@ -19,7 +19,7 @@ The app started as the main assignment for **Computer Networks II** (ECE, Aristo
 
 | Version | What it is |
 |---|---|
-| [`course-submission`](https://github.com/sterlouk/CN2_AUTH_ChatAndVoIP/tree/course-submission) | The version I submitted: working plaintext UDP chat and VoIP |
+| [`course-submission`](https://github.com/sterlouk/secure-udp-chat-voip/tree/course-submission) | The version I submitted: working plaintext UDP chat and VoIP |
 | `master` | Extended after the course: encryption, anti-replay, bug fixes, tests, CI |
 
 ### What changed after submission

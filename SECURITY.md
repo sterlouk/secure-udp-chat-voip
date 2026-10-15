@@ -4,7 +4,7 @@ This document describes the threat model, the protocol that protects chat and vo
 
 ## Why this exists
 
-The [course submission](https://github.com/sterlouk/CN2_AUTH_ChatAndVoIP/tree/course-submission) sent chat text and raw PCM audio as **plaintext UDP datagrams**, and it accepted any packet that reached its ports. Anyone on the same network (shared Wi-Fi, a compromised router, anything on the path) could:
+The [course submission](https://github.com/sterlouk/secure-udp-chat-voip/tree/course-submission) sent chat text and raw PCM audio as **plaintext UDP datagrams**, and it accepted any packet that reached its ports. Anyone on the same network (shared Wi-Fi, a compromised router, anything on the path) could:
 
 - **Eavesdrop:** read every message and play back the call audio with Wireshark.
 - **Inject:** send text or audio that appears to come from the peer. UDP source addresses are trivially spoofed, and the app performed no checks.
