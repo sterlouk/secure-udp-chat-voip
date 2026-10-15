@@ -1,288 +1,293 @@
 package com.cn2.communication;
-import javax.sound.sampled.*; 
-import java.util.Calendar; // MINE
-import java.io.*;
-import java.net.*;
 
-import javax.swing.JFrame;
-import javax.swing.JOptionPane;//MINE
-import javax.swing.JTextField;
+import java.awt.BorderLayout;
+import java.awt.FlowLayout;
+import java.awt.GridLayout;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.SocketException;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import javax.crypto.SecretKey;
+import javax.sound.sampled.LineUnavailableException;
+import javax.swing.BorderFactory;
 import javax.swing.JButton;
-import javax.swing.JTextArea;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 
-import java.awt.event.ActionListener;
-import java.awt.event.ActionEvent;
-import java.awt.*;
-import java.awt.event.*;
-import java.awt.Color;
-import java.lang.Thread;
+/**
+ * Peer-to-peer chat and VoIP over UDP, encrypted end to end with AES-256-GCM.
+ *
+ * Each peer sends to the other's receive ports, so two peers use mirrored
+ * settings, e.g. A sends chat to 50001 and listens on 50000, B the reverse.
+ */
+public class App {
 
-public class App extends Frame implements WindowListener, ActionListener {
-	
-	static TextField inputTextField;		
-	static JTextArea textArea;				 
-	static JFrame frame;					
-	static JButton sendButton;				
-	static JTextField meesageTextField;		  
-	public static Color gray;				
-	final static String newline="\n";		
-	static JButton callButton;				
-	static JButton closeCallButton;
-	static JButton deafenButton;
-	static JButton muteButton;
-	static boolean close;
-	static boolean deafen;
-	static boolean mute;
-	static String friend;
-	static int getMessPort;
-	static int getCallPort;
-	static int sendMessPort;
-	static int sendCallPort;
-	
-	public App(String title) {
-		
+	/** Keeps an encrypted chat datagram well under a typical 1500-byte MTU. */
+	static final int MAX_CHAT_BYTES = 1024;
+	private static final long REJECT_NOTICE_INTERVAL_MS = 5_000;
+	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 
-		super(title);									
-		gray = new Color(254, 254, 254);		
-		setBackground(gray);
-		setLayout(new FlowLayout());			
-		addWindowListener(this);	
-		
-		// Setting up the TextField and the TextArea
-		inputTextField = new TextField();
-		inputTextField.setColumns(20);
-		
-		// Setting up the TextArea.
-		textArea = new JTextArea(10,40);			
-		textArea.setLineWrap(true);				
-		textArea.setEditable(false);			
-		JScrollPane scrollPane = new JScrollPane(textArea);
-		scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
-		
-		//Setting up the buttons
-		sendButton = new JButton("Send");			
-		callButton = new JButton("Call");
-		closeCallButton = new JButton("Close call");
-		deafenButton = new JButton("Deafen");
-		muteButton = new JButton("Mute");
-		
-						
-		/*
-		 * 2. Adding the components to the GUI
-		 */
-		add(scrollPane);								
-		add(inputTextField);
-		add(sendButton);
-		add(callButton);
-		add(closeCallButton);
-		add(deafenButton);
-		add(muteButton);
-		/*
-		 * 3. Linking the buttons to the ActionListener
-		 */
-		sendButton.addActionListener(this);			
-		callButton.addActionListener(this);	
-		closeCallButton.addActionListener(this);
-		deafenButton.addActionListener(this);
-		muteButton.addActionListener(this);
-		
-		
+	private final ConnectionSettings settings;
+	private final SecureChannel channel;
+	private final DatagramSocket chatReceiveSocket;
+	private final DatagramSocket chatSendSocket;
+	private final ExecutorService sender = Executors.newSingleThreadExecutor(r -> {
+		Thread t = new Thread(r, "chat-send");
+		t.setDaemon(true);
+		return t;
+	});
+
+	private final JFrame frame = new JFrame("Secure P2P Chat & VoIP");
+	private final JTextArea conversation = new JTextArea(14, 48);
+	private final JTextField input = new JTextField(32);
+	private final JButton sendButton = new JButton("Send");
+	private final JButton callButton = new JButton("Call");
+	private final JButton hangUpButton = new JButton("Hang up");
+	private final JButton muteButton = new JButton("Mute");
+	private final JButton deafenButton = new JButton("Deafen");
+
+	private VoiceCall call;
+	private boolean muted;
+	private boolean deafened;
+	private long rejectedChat;
+	private long lastRejectNotice;
+
+	App(ConnectionSettings settings, SecretKey key) throws SocketException {
+		this.settings = settings;
+		this.channel = new SecureChannel(key);
+		this.chatReceiveSocket = new DatagramSocket(settings.chatReceivePort);
+		this.chatSendSocket = new DatagramSocket();
 	}
-	
 
-	public static void main(String[] args) {
-		
+	public static void main(String[] args) throws Exception {
+		JTextField peer = new JTextField("127.0.0.1");
+		JTextField chatSend = new JTextField("50001");
+		JTextField chatReceive = new JTextField("50000");
+		JTextField voiceSend = new JTextField("50003");
+		JTextField voiceReceive = new JTextField("50002");
+		JPasswordField passphrase = new JPasswordField();
 
-		App app = new App("****OUR CHAT****");  // TODO: You can add the title that will displayed on the Window of the App here																		  
-		app.setSize(500,250);				  
-		app.setVisible(true);				  
-		
-		friend = JOptionPane.showInputDialog("Enter the IP of your friend: ");
-		//PORTS:
-		sendMessPort = Integer.parseInt(JOptionPane.showInputDialog("Choose message destination port: "));
-		getMessPort = Integer.parseInt(JOptionPane.showInputDialog("Choose your message receiving port: "));
-		sendCallPort = Integer.parseInt(JOptionPane.showInputDialog("Choose sound destination port: "));
-		getCallPort = Integer.parseInt(JOptionPane.showInputDialog("Choose your sound receiving port: "));
-		
-		
-		startReceivingMessages();
-		
+		JPanel form = new JPanel(new GridLayout(0, 2, 8, 6));
+		form.add(new JLabel("Peer IP address"));
+		form.add(peer);
+		form.add(new JLabel("Chat: send to port"));
+		form.add(chatSend);
+		form.add(new JLabel("Chat: listen on port"));
+		form.add(chatReceive);
+		form.add(new JLabel("Voice: send to port"));
+		form.add(voiceSend);
+		form.add(new JLabel("Voice: listen on port"));
+		form.add(voiceReceive);
+		form.add(new JLabel("Shared passphrase"));
+		form.add(passphrase);
+
+		while (true) {
+			int choice = JOptionPane.showConfirmDialog(null, form, "Connect to peer", JOptionPane.OK_CANCEL_OPTION,
+					JOptionPane.PLAIN_MESSAGE);
+			if (choice != JOptionPane.OK_OPTION) System.exit(0);
+
+			char[] secret = passphrase.getPassword();
+			try {
+				ConnectionSettings settings = ConnectionSettings.parse(peer.getText(), chatSend.getText(),
+						chatReceive.getText(), voiceSend.getText(), voiceReceive.getText(), secret);
+				SecretKey key = SecureChannel.deriveKey(secret); // also wipes `secret`
+				passphrase.setText("");
+				App app = new App(settings, key);
+				SwingUtilities.invokeLater(app::show);
+				app.startReceivingChat();
+				return;
+			} catch (ConnectionSettings.InvalidSettingsException e) {
+				JOptionPane.showMessageDialog(null, e.getMessage(), "Invalid settings", JOptionPane.WARNING_MESSAGE);
+			} catch (SocketException e) {
+				JOptionPane.showMessageDialog(null, "Cannot listen on chat port " + chatReceive.getText().trim()
+						+ ": " + e.getMessage(), "Port unavailable", JOptionPane.ERROR_MESSAGE);
+			} finally {
+				Arrays.fill(secret, '\0');
+			}
+		}
 	}
-	
-	
-	static public void startSendingMessages() {
-		new Thread(() -> {
-			String message = inputTextField.getText();
-			if(!message.isEmpty()) {
+
+	private void show() {
+		conversation.setEditable(false);
+		conversation.setLineWrap(true);
+		conversation.setWrapStyleWord(true);
+
+		JPanel compose = new JPanel(new BorderLayout(6, 0));
+		compose.add(input, BorderLayout.CENTER);
+		compose.add(sendButton, BorderLayout.EAST);
+
+		JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT));
+		controls.add(callButton);
+		controls.add(hangUpButton);
+		controls.add(muteButton);
+		controls.add(deafenButton);
+
+		JLabel status = new JLabel(String.format("Peer %s  |  chat %d->%d  voice %d->%d  |  AES-256-GCM",
+				settings.peer.getHostAddress(), settings.chatReceivePort, settings.chatSendPort,
+				settings.voiceReceivePort, settings.voiceSendPort));
+
+		JPanel bottom = new JPanel(new BorderLayout(0, 6));
+		bottom.add(compose, BorderLayout.NORTH);
+		bottom.add(controls, BorderLayout.CENTER);
+		bottom.add(status, BorderLayout.SOUTH);
+
+		JPanel root = new JPanel(new BorderLayout(0, 8));
+		root.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+		root.add(new JScrollPane(conversation), BorderLayout.CENTER);
+		root.add(bottom, BorderLayout.SOUTH);
+
+		sendButton.addActionListener(e -> sendChat());
+		input.addActionListener(e -> sendChat()); // Enter key
+		callButton.addActionListener(e -> startCall());
+		hangUpButton.addActionListener(e -> endCall());
+		muteButton.addActionListener(e -> toggleMute());
+		deafenButton.addActionListener(e -> toggleDeafen());
+		updateCallButtons();
+
+		frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+		frame.addWindowListener(new WindowAdapter() {
+			@Override
+			public void windowClosing(WindowEvent e) {
+				shutdown();
+			}
+		});
+		frame.setContentPane(root);
+		frame.pack();
+		frame.setLocationByPlatform(true);
+		frame.setVisible(true);
+		input.requestFocusInWindow();
+	}
+
+	private void sendChat() {
+		String text = input.getText().trim();
+		if (text.isEmpty()) return;
+		byte[] plain = text.getBytes(StandardCharsets.UTF_8);
+		if (plain.length > MAX_CHAT_BYTES) {
+			log("Message too long (" + plain.length + " bytes, max " + MAX_CHAT_BYTES + "). Not sent.");
+			return;
+		}
+		input.setText("");
+		sender.execute(() -> {
+			try {
+				byte[] packet = channel.seal(SecureChannel.Type.CHAT, plain, 0, plain.length);
+				chatSendSocket.send(new DatagramPacket(packet, packet.length, settings.peer, settings.chatSendPort));
+				log("You: " + text);
+			} catch (IOException e) {
+				log("Send failed: " + e.getMessage());
+			} catch (GeneralSecurityException e) {
+				throw new IllegalStateException(e);
+			}
+		});
+	}
+
+	private void startReceivingChat() {
+		Thread receiver = new Thread(() -> {
+			byte[] buffer = new byte[MAX_CHAT_BYTES + SecureChannel.OVERHEAD + 256];
+			DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+			while (!chatReceiveSocket.isClosed()) {
 				try {
-					DatagramSocket sendSocket = new DatagramSocket(); //socket for sending 
-					byte[] buffer =  message.getBytes(); //reverse function from receiving socket
-					InetAddress recipientAddress = InetAddress.getByName(friend);
-					DatagramPacket packet = new DatagramPacket(buffer, buffer.length, recipientAddress, sendMessPort);
-					
-					Calendar currentTime = Calendar.getInstance();
-					sendSocket.send(packet);
-					sendSocket.close();
-					inputTextField.setText("");
-					textArea.append("Message sent: " + message + "\t" + "@: " + currentTime.getTime() + "\n");
-					
-				} catch (IOException ex) {
-					
-					ex.printStackTrace();
-					System.out.println("Problem with message sending port");
-				} 
-		}
-	}).start();
-	}
-	
-	static public void startReceivingMessages() {
-		
-		new Thread(() -> {
-			
-			try {
-				DatagramSocket socket = new DatagramSocket(getMessPort); // socket for receiving messages
-				byte[] buffer = new byte[500]; //make a buffer with 500 bytes capacity for incoming messages
-				DatagramPacket packet = new DatagramPacket(buffer, buffer.length); // packet === buffer content (inc message) 
-			
-				while(true) {
-					socket.receive(packet);
-					String message = new String(packet.getData(), 0, packet.getLength());
-					Calendar currentTime = Calendar.getInstance();
-					textArea.append("Message received: " + message + "\t" + "@: " + currentTime.getTime() + "\n");
+					// receive() shrinks the packet length to the last datagram; reset it or later messages get truncated
+					packet.setLength(buffer.length);
+					chatReceiveSocket.receive(packet);
+					byte[] plain = channel.open(SecureChannel.Type.CHAT, packet.getData(), packet.getOffset(), packet.getLength());
+					log("Peer: " + new String(plain, StandardCharsets.UTF_8));
+				} catch (PacketRejectedException e) {
+					noteRejected(packet, e);
+				} catch (IOException e) {
+					if (!chatReceiveSocket.isClosed()) log("Receive failed: " + e.getMessage());
 				}
-		 
-		}catch(IOException e) {
-			e.printStackTrace();
-			System.out.println("Problem with message receiving port");
-		}
-		
-	}).start();
-	}
-	
-	static public void outgoingSound() {
-		new Thread(() -> {
-			try {
-				AudioFormat format = new AudioFormat(16000, 16, 1, true, true);
-				TargetDataLine mic = AudioSystem.getTargetDataLine(format); 
-				mic.open(format);
-				mic.start();
-				
-				DatagramSocket socket = new DatagramSocket(); // socket for sending sound
-				byte[] sendBuffer = new byte[1024]; //adjust for better quality
-				InetAddress recepientIp =  InetAddress.getByName(friend);
-				//DatagramPacket sendPacket = new DatagramPacket(sendBuffer, sendBuffer.length);
-				//byte[] outgoingSound = sendPacket.getData();
-					
-				
-				while(!mute) {
-						int bytesInBuffer = mic.read(sendBuffer, 0, sendBuffer.length);
-						DatagramPacket sendPacket = new DatagramPacket(sendBuffer, bytesInBuffer, recepientIp, sendCallPort);
-						socket.send(sendPacket);
-				}
-				
-				
-			} catch (IOException e) {
-				e.printStackTrace();
-				System.out.println("Problem with sound receiving port");
-			} catch (LineUnavailableException e) {
-				e.printStackTrace();
-				System.out.println("Line unavailable");
 			}
-		}).start();
+		}, "chat-receive");
+		receiver.setDaemon(true);
+		receiver.start();
 	}
-	
-	static public void incomingSound() {
-		new Thread(() -> {
-			try {
-				AudioFormat format = new AudioFormat(16000, 16, 1, true, true);
-				SourceDataLine speaker = AudioSystem.getSourceDataLine(format);
-				speaker.open(format);
-				speaker.start();
-				
-				DatagramSocket receiveSocket = new DatagramSocket(getCallPort); //receive sound
-				byte[] receiveBuffer = new byte[1024];
-				DatagramPacket receivePacket = new DatagramPacket(receiveBuffer, receiveBuffer.length);//link buffer to packet , packet wraps buffer
-				
-				while(!deafen) {
-					receiveSocket.receive(receivePacket);//copy data from packet (buffer is inside packet)
-					speaker.write(receivePacket.getData(), 0, receivePacket.getLength());
-					
-				}
-				
-			}  catch (LineUnavailableException e) {
-				e.printStackTrace();
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			} 
-		}).start();	
-	}
-	
-	@Override
-	public void actionPerformed(ActionEvent e) {
-		
-	
-		if (e.getSource() == sendButton){
-			
-			startSendingMessages();
-				
-			}
-		else if(e.getSource() == callButton){
-			deafen = false;
-			mute = false;
-			outgoingSound();
-			incomingSound();
+
+	/** Report dropped packets without letting a flood of them spam the window. */
+	private synchronized void noteRejected(DatagramPacket packet, PacketRejectedException e) {
+		rejectedChat++;
+		long now = System.currentTimeMillis();
+		if (now - lastRejectNotice >= REJECT_NOTICE_INTERVAL_MS) {
+			lastRejectNotice = now;
+			log("Dropped a chat packet from " + packet.getAddress().getHostAddress() + " (" + e.reason()
+					+ "). Total dropped: " + rejectedChat);
 		}
-		if(e.getSource() == closeCallButton) {
-			deafen = true;
-			mute = true;
+	}
+
+	private void startCall() {
+		if (call != null && call.isRunning()) return;
+		call = new VoiceCall(channel, settings.peer, settings.voiceSendPort, settings.voiceReceivePort, this::log);
+		call.setMuted(muted);
+		call.setDeafened(deafened);
+		try {
+			call.start();
+			log("Call started.");
+		} catch (LineUnavailableException e) {
+			log("Microphone or speaker unavailable: " + e.getMessage());
+		} catch (SocketException e) {
+			log("Cannot listen on voice port " + settings.voiceReceivePort + ": " + e.getMessage());
 		}
-		if(e.getSource() == deafenButton) {
-			deafen = true;
-		}
-		if(e.getSource() == muteButton) {
-			mute = true;
-		}
-
+		updateCallButtons();
 	}
 
-	@Override
-	public void windowActivated(WindowEvent e) {
-		// TODO Auto-generated method stub	
-		
+	private void endCall() {
+		if (call == null) return;
+		call.stop();
+		call = null;
+		log("Call ended.");
+		updateCallButtons();
 	}
 
-	@Override
-	public void windowClosed(WindowEvent e) {
-		// TODO Auto-generated method stub	
+	private void toggleMute() {
+		muted = !muted;
+		if (call != null) call.setMuted(muted);
+		updateCallButtons();
 	}
 
-	@Override
-	public void windowClosing(WindowEvent e) {
-		// TODO Auto-generated method stub
-		dispose();
-        	System.exit(0);
+	private void toggleDeafen() {
+		deafened = !deafened;
+		if (call != null) call.setDeafened(deafened);
+		updateCallButtons();
 	}
 
-	@Override
-	public void windowDeactivated(WindowEvent e) {
-		// TODO Auto-generated method stub	
+	private void updateCallButtons() {
+		boolean inCall = call != null && call.isRunning();
+		callButton.setEnabled(!inCall);
+		hangUpButton.setEnabled(inCall);
+		muteButton.setText(muted ? "Unmute" : "Mute");
+		deafenButton.setText(deafened ? "Undeafen" : "Deafen");
 	}
 
-	@Override
-	public void windowDeiconified(WindowEvent e) {
-		// TODO Auto-generated method stub	
+	private void log(String line) {
+		String stamped = "[" + LocalTime.now().format(TIME) + "] " + line + "\n";
+		SwingUtilities.invokeLater(() -> {
+			conversation.append(stamped);
+			conversation.setCaretPosition(conversation.getDocument().getLength());
+		});
 	}
 
-	@Override
-	public void windowIconified(WindowEvent e) {
-		// TODO Auto-generated method stub	
+	private void shutdown() {
+		if (call != null) call.stop();
+		chatReceiveSocket.close();
+		chatSendSocket.close();
+		sender.shutdownNow();
+		frame.dispose();
+		System.exit(0);
 	}
-
-	@Override
-	public void windowOpened(WindowEvent e) {
-		// TODO Auto-generated method stub	
-	}
-	
 }
